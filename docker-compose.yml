@@ -1,0 +1,32 @@
+services:
+  app:
+    build: .
+    container_name: auth-identity-service
+    command: gunicorn auth_identity.wsgi:application --bind 0.0.0.0:8000
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - DJANGO_DB_HOST=db
+      - DJANGO_DB_NAME=auth_identity_db
+      - DJANGO_DB_USER=auth_identity_user
+      - DJANGO_DB_PASSWORD=othersecretpassword
+    ports:
+      - "8003:8000"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15-alpine
+    container_name: postgres-auth-identity-service
+    restart: always
+    environment:
+      POSTGRES_DB: auth_identity_db
+      POSTGRES_USER: auth_identity_user
+      POSTGRES_PASSWORD: othersecretpassword
+    volumes:
+      - postgres-auth-identity-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-auth-identity-data:
