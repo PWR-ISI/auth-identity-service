@@ -117,16 +117,43 @@ class CognitoService:
             id_token = tokens.get('IdToken')
             refresh_token = tokens.get('RefreshToken')
 
-            # Get or create local user
+            # Fetch user attributes from Cognito
+            user_attrs = {}
+            try:
+                user_info = self.client.admin_get_user(
+                    UserPoolId=self.user_pool_id,
+                    Username=email
+                )
+                for attr in user_info.get('UserAttributes', []):
+                    user_attrs[attr['Name']] = attr['Value']
+            except:
+                pass
+
+            # Get or create local user with Cognito attributes
+            defaults = {'username': email}
+            if 'given_name' in user_attrs:
+                defaults['first_name'] = user_attrs['given_name']
+            if 'family_name' in user_attrs:
+                defaults['last_name'] = user_attrs['family_name']
+            if 'custom:role' in user_attrs:
+                defaults['role'] = user_attrs['custom:role']
+
             user, created = User.objects.get_or_create(
                 email=email,
-                defaults={
-                    'username': email,
-                }
+                defaults=defaults
             )
 
             if created:
                 UserProfile.objects.create(user=user)
+            else:
+                # Update existing user with fresh data from Cognito
+                if 'given_name' in user_attrs and user_attrs['given_name'] != user.first_name:
+                    user.first_name = user_attrs['given_name']
+                if 'family_name' in user_attrs and user_attrs['family_name'] != user.last_name:
+                    user.last_name = user_attrs['family_name']
+                if 'custom:role' in user_attrs and user_attrs['custom:role'] != user.role:
+                    user.role = user_attrs['custom:role']
+                user.save()
 
             return {
                 'success': True,

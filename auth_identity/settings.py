@@ -109,7 +109,7 @@ STATIC_URL = 'static/'
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'api.authentication.CognitoTokenAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -129,11 +129,12 @@ SIMPLE_JWT = {
     'SIGNING_KEY': SECRET_KEY,
 }
 
-# CORS Configuration
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8001,http://localhost:42535,http://127.0.0.1:3000,http://127.0.0.1:5173,http://localhost:4566,https://localhost:4566,http://localhost.localstack.cloud:4566,https://localhost.localstack.cloud:4566,http://prod-config-frontend.s3-website.localhost.localstack.cloud:4566,https://prod-config-frontend.s3-website.localhost.localstack.cloud:4566,*').split(',')
+# CORS Configuration - Allow all origins for LocalStack development
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = ['*']
 CORS_EXPOSE_HEADERS = ['*']
+CORS_ALLOW_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS']
 
 # Default Primary Key Field Type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
