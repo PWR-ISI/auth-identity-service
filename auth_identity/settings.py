@@ -1,8 +1,10 @@
 from pathlib import Path
 import os
 from datetime import timedelta
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-72^%wzvk^=xa2qzvwr8oqa(!p1=2b9v&98wutj-2*jckfccdww')
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
@@ -128,9 +130,10 @@ SIMPLE_JWT = {
 }
 
 # CORS Configuration
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8001,http://127.0.0.1:3000,http://127.0.0.1:5173,https://localhost:4566,https://localhost.localstack.cloud:4566,https://prod-config-frontend.s3-website.localhost.localstack.cloud:4566').split(',')
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173,http://localhost:8001,http://localhost:42535,http://127.0.0.1:3000,http://127.0.0.1:5173,http://localhost:4566,https://localhost:4566,http://localhost.localstack.cloud:4566,https://localhost.localstack.cloud:4566,http://prod-config-frontend.s3-website.localhost.localstack.cloud:4566,https://prod-config-frontend.s3-website.localhost.localstack.cloud:4566,*').split(',')
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = ['*']
+CORS_EXPOSE_HEADERS = ['*']
 
 # Default Primary Key Field Type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

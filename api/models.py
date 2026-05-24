@@ -15,7 +15,7 @@ class User(AbstractUser):
     cognito_sub = models.CharField(max_length=255, blank=True, unique=True, null=True)
 
     class Meta:
-        db_table = 'auth_user'
+        db_table = 'api_user'
         ordering = ['-date_joined']
 
     def __str__(self):

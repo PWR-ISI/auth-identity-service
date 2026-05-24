@@ -8,6 +8,7 @@ from .serializers import (
     UserSerializer, UserDetailSerializer, CreateUserSerializer,
     LoginSerializer, TokenSerializer, AuditLogSerializer, UserProfileSerializer
 )
+from .cognito_service import CognitoService
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 
@@ -21,40 +22,110 @@ def health_check(request):
 class AuthViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cognito_service = CognitoService()
+
     @action(detail=False, methods=['post'])
     def login(self, request):
-        serializer = LoginSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.validated_data['user']
-            refresh = RefreshToken.for_user(user)
+        email = request.data.get('email')
+        password = request.data.get('password')
 
-            # Log the login
-            AuditLog.objects.create(
-                user=user,
-                action='login',
-                ip_address=self._get_client_ip(request),
-                user_agent=request.META.get('HTTP_USER_AGENT', '')
+        if not email or not password:
+            return Response(
+                {'error': 'Email and password are required'},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-            return Response({
-                'token': str(refresh.access_token),
-                'refresh': str(refresh),
-                'user': UserSerializer(user).data
-            }, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Authenticate with Cognito
+        result = self.cognito_service.sign_in(email, password)
+
+        if not result['success']:
+            return Response(
+                {'error': result['error']},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        user = result['user']
+
+        # Log the login
+        AuditLog.objects.create(
+            user=user,
+            action='login',
+            ip_address=self._get_client_ip(request),
+            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        )
+
+        return Response({
+            'access_token': result['tokens']['access_token'],
+            'id_token': result['tokens']['id_token'],
+            'refresh_token': result['tokens']['refresh_token'],
+            'user': UserSerializer(user).data
+        }, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'])
     def register(self, request):
-        serializer = CreateUserSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'token': str(refresh.access_token),
-                'refresh': str(refresh),
-                'user': UserSerializer(user).data
-            }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        email = request.data.get('email')
+        password = request.data.get('password')
+        password_confirm = request.data.get('password_confirm')
+        first_name = request.data.get('first_name')
+        last_name = request.data.get('last_name')
+        role = request.data.get('role', 'patient')
+
+        # Validate input
+        if not all([email, password, password_confirm, first_name, last_name]):
+            return Response(
+                {'error': 'All fields are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if password != password_confirm:
+            return Response(
+                {'error': 'Passwords do not match'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Try to sign up with Cognito
+        result = self.cognito_service.sign_up(
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            role=role
+        )
+
+        if not result['success']:
+            return Response(
+                {'error': result['error']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Set permanent password for user (bypasses unconfirmed status)
+        password_result = self.cognito_service.admin_set_user_password(
+            email, password, permanent=True
+        )
+        if not password_result['success']:
+            return Response(
+                {'error': f'Could not set password: {password_result["error"]}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Now sign in the user
+        signin_result = self.cognito_service.sign_in(email, password)
+        if not signin_result['success']:
+            return Response(
+                {'error': f'Authentication failed: {signin_result["error"]}'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        user = signin_result['user']
+
+        return Response({
+            'access_token': signin_result['tokens']['access_token'],
+            'id_token': signin_result['tokens']['id_token'],
+            'refresh_token': signin_result['tokens']['refresh_token'],
+            'user': UserSerializer(user).data
+        }, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
     def logout(self, request):
