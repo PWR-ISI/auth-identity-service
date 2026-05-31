@@ -9,6 +9,7 @@ class User(AbstractUser):
         ('admin', 'Administrator'),
     )
 
+    email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='patient')
     phone = models.CharField(max_length=20, blank=True)
     is_active = models.BooleanField(default=True)

@@ -14,6 +14,8 @@ RUN pip install --upgrade pip && pip install -r /app/requirements.txt || true
 
 COPY . /app
 
+RUN chmod +x /app/entrypoint.sh
+
 EXPOSE 8000
 
 RUN python manage.py collectstatic --noinput 2>/dev/null || true
@@ -21,4 +23,4 @@ RUN python manage.py collectstatic --noinput 2>/dev/null || true
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=40s \
     CMD curl -f http://localhost:8000/api/v2/health/ || exit 1
 
-CMD sh -c "python manage.py migrate --noinput 2>/dev/null; gunicorn --bind 0.0.0.0:8000 --workers 4 --timeout 120 --access-logfile - --error-logfile - auth_identity.wsgi:application"
+ENTRYPOINT ["/app/entrypoint.sh"]

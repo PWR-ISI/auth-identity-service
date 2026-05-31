@@ -13,10 +13,19 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 
 
-@api_view(['GET'])
+@api_view(['GET', 'OPTIONS'])
 @permission_classes([AllowAny])
 def health_check(request):
+    if request.method == 'OPTIONS':
+        return Response(status=status.HTTP_200_OK)
     return Response({'status': 'healthy'}, status=status.HTTP_200_OK)
+
+
+@api_view(['OPTIONS'])
+@permission_classes([AllowAny])
+def options_handler(request):
+    """Handle CORS preflight requests"""
+    return Response(status=status.HTTP_200_OK)
 
 
 class AuthViewSet(viewsets.ViewSet):
@@ -26,8 +35,11 @@ class AuthViewSet(viewsets.ViewSet):
         super().__init__(*args, **kwargs)
         self.cognito_service = CognitoService()
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post', 'options'])
     def login(self, request):
+        if request.method == 'OPTIONS':
+            return Response(status=status.HTTP_200_OK)
+
         email = request.data.get('email')
         password = request.data.get('password')
 
@@ -63,8 +75,11 @@ class AuthViewSet(viewsets.ViewSet):
             'user': UserSerializer(user).data
         }, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post', 'options'])
     def register(self, request):
+        if request.method == 'OPTIONS':
+            return Response(status=status.HTTP_200_OK)
+
         email = request.data.get('email')
         password = request.data.get('password')
         password_confirm = request.data.get('password_confirm')
