@@ -9,8 +9,15 @@ from .serializers import (
     LoginSerializer, TokenSerializer, AuditLogSerializer, UserProfileSerializer
 )
 from .cognito_service import CognitoService
+from .permissions import IsAdmin
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+
+
+def _client_ip(request):
+    xff = request.META.get('HTTP_X_FORWARDED_FOR')
+    return xff.split(',')[0] if xff else request.META.get('REMOTE_ADDR')
 
 
 @api_view(['GET', 'OPTIONS'])
@@ -255,3 +262,56 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         if self.request.user.role == 'admin':
             return AuditLog.objects.all()
         return AuditLog.objects.filter(user=self.request.user)
+
+
+@extend_schema(
+    summary='Create a staff account (admin only)',
+    description='Administrator creates a Cognito + DB account for staff (e.g. a doctor) and assigns a role. '
+                'Returns the new account id (cognito_sub) used as doctor_id across services.',
+    responses={201: OpenApiResponse(description='Created: {user_id, id, email, first_name, last_name, role}')},
+)
+@api_view(['POST'])
+@permission_classes([IsAdmin])
+def create_staff(request):
+    """Admin-only endpoint to provision a staff (doctor) account in Cognito + DB."""
+    data = request.data
+    email = data.get('email')
+    password = data.get('password')
+    first_name = data.get('first_name')
+    last_name = data.get('last_name')
+    role = data.get('role', 'doctor')
+
+    missing = [f for f in ('email', 'password', 'first_name', 'last_name') if not data.get(f)]
+    if missing:
+        return Response({'error': f'Missing required fields: {", ".join(missing)}'},
+                        status=status.HTTP_400_BAD_REQUEST)
+    if role not in dict(User.ROLE_CHOICES):
+        return Response({'error': f'Invalid role: {role}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    cognito = CognitoService()
+    result = cognito.sign_up(email=email, password=password,
+                             first_name=first_name, last_name=last_name, role=role)
+    if not result['success']:
+        return Response({'error': result['error']}, status=status.HTTP_400_BAD_REQUEST)
+
+    pw = cognito.admin_set_user_password(email, password, permanent=True)
+    if not pw['success']:
+        return Response({'error': f'Could not set password: {pw["error"]}'},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    user = result['user']
+    AuditLog.objects.create(
+        user=request.user,
+        action='create_user',
+        ip_address=_client_ip(request),
+        user_agent=request.META.get('HTTP_USER_AGENT', ''),
+        details={'created_user_id': user.id, 'email': email, 'role': role},
+    )
+    return Response({
+        'user_id': user.cognito_sub or str(user.id),
+        'id': user.id,
+        'email': user.email,
+        'first_name': user.first_name,
+        'last_name': user.last_name,
+        'role': user.role,
+    }, status=status.HTTP_201_CREATED)
