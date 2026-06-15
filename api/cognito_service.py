@@ -1,10 +1,45 @@
 import os
+import uuid
 import boto3
 from botocore.exceptions import ClientError
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth.hashers import make_password, check_password as django_check_password
+from rest_framework_simplejwt.tokens import RefreshToken
 from .models import UserProfile
 
 User = get_user_model()
+
+
+def _local_mode():
+    """Return True when Cognito pool ID is a placeholder (no real Cognito available)."""
+    pool_id = os.getenv('COGNITO_USER_POOL_ID', '')
+    return pool_id.startswith('local-') or pool_id == ''
+
+
+def _user_uuid(user):
+    """Return a stable UUID for the user — cognito_sub if set, else derive from integer PK."""
+    if user.cognito_sub:
+        return user.cognito_sub
+    return str(uuid.UUID(int=user.pk))
+
+
+def _make_local_tokens(user):
+    """Generate SimpleJWT tokens with sub/role/email claims for cross-service use."""
+    sub = _user_uuid(user)
+    refresh = RefreshToken.for_user(user)
+    refresh['sub'] = sub
+    refresh['role'] = getattr(user, 'role', 'patient')
+    refresh['email'] = user.email
+    access = refresh.access_token
+    access['sub'] = sub
+    access['role'] = getattr(user, 'role', 'patient')
+    access['email'] = user.email
+    return {
+        'access_token': str(access),
+        'id_token': str(access),   # other services use id_token as Bearer
+        'refresh_token': str(refresh),
+    }
+
 
 class CognitoService:
     def __init__(self):
@@ -29,6 +64,8 @@ class CognitoService:
 
     def sign_up(self, email, password, first_name, last_name, role='patient'):
         """Register a new user in Cognito and local database"""
+        if _local_mode():
+            return self._local_sign_up(email, password, first_name, last_name, role)
         try:
             # Try to sign up first (in case user doesn't exist)
             try:
@@ -99,8 +136,41 @@ class CognitoService:
                 'error_code': 'UnknownError'
             }
 
+    def _local_sign_up(self, email, password, first_name, last_name, role='patient'):
+        """Create user in local DB only (no Cognito) for dev mode."""
+        try:
+            if User.objects.filter(email=email).exists():
+                return {'success': False, 'error': 'User with this email already exists', 'error_code': 'UsernameExistsException'}
+            user = User.objects.create(
+                email=email,
+                username=email,
+                first_name=first_name,
+                last_name=last_name,
+                role=role,
+                cognito_sub=str(uuid.uuid4()),
+            )
+            user.set_password(password)
+            user.save()
+            UserProfile.objects.create(user=user)
+            return {'success': True, 'user_sub': str(user.id), 'user': user, 'message': 'User registered (local mode)'}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'error_code': 'UnknownError'}
+
+    def _local_sign_in(self, email, password):
+        """Authenticate against local Django DB (no Cognito) for dev mode."""
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return {'success': False, 'error': 'User not found', 'error_code': 'UserNotFoundException'}
+        if not user.check_password(password):
+            return {'success': False, 'error': 'Invalid credentials', 'error_code': 'NotAuthorizedException'}
+        tokens = _make_local_tokens(user)
+        return {'success': True, 'user': user, 'tokens': tokens, 'message': 'Authentication successful (local mode)'}
+
     def sign_in(self, email, password):
         """Authenticate user with Cognito and return tokens"""
+        if _local_mode():
+            return self._local_sign_in(email, password)
         try:
             response = self.client.initiate_auth(
                 ClientId=self.client_id,
@@ -155,14 +225,13 @@ class CognitoService:
                     user.role = user_attrs['custom:role']
                 user.save()
 
+            # Wrap Cognito auth result in our own SimpleJWT so downstream services
+            # get the sub/role/email claims they expect (JWTStubMiddleware).
+            tokens = _make_local_tokens(user)
             return {
                 'success': True,
                 'user': user,
-                'tokens': {
-                    'access_token': access_token,
-                    'id_token': id_token,
-                    'refresh_token': refresh_token,
-                },
+                'tokens': tokens,
                 'message': 'Authentication successful'
             }
 
@@ -270,6 +339,8 @@ class CognitoService:
 
     def admin_set_user_password(self, email, password, permanent=True):
         """Admin endpoint to set user password (for testing/setup)"""
+        if _local_mode():
+            return {'success': True, 'message': 'Password already set during local registration'}
         try:
             self.client.admin_set_user_password(
                 UserPoolId=self.user_pool_id,
