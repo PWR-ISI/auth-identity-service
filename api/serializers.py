@@ -7,8 +7,10 @@ from .models import User, UserProfile, AuditLog
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ('id', 'email', 'first_name', 'last_name', 'role', 'phone', 'is_active', 'date_joined')
-        read_only_fields = ('id', 'date_joined')
+        # cognito_sub is the patient/user UUID used as patient_id across services
+        # (needed e.g. so a receptionist can book a visit on behalf of a patient).
+        fields = ('id', 'cognito_sub', 'email', 'first_name', 'last_name', 'role', 'phone', 'is_active', 'date_joined')
+        read_only_fields = ('id', 'cognito_sub', 'date_joined')
 
 
 class UserDetailSerializer(serializers.ModelSerializer):

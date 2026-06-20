@@ -9,7 +9,7 @@ from .serializers import (
     LoginSerializer, TokenSerializer, AuditLogSerializer, UserProfileSerializer
 )
 from .cognito_service import CognitoService
-from .permissions import IsAdmin
+from .permissions import IsAdmin, IsAdminOrStaff
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -271,9 +271,9 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     responses={201: OpenApiResponse(description='Created: {user_id, id, email, first_name, last_name, role}')},
 )
 @api_view(['POST'])
-@permission_classes([IsAdmin])
+@permission_classes([IsAdminOrStaff])
 def create_staff(request):
-    """Admin-only endpoint to provision a staff (doctor) account in Cognito + DB."""
+    """Admin or front-desk clerk provisions a staff/doctor/patient account in Cognito + DB."""
     data = request.data
     email = data.get('email')
     password = data.get('password')
