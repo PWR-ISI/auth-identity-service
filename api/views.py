@@ -1,5 +1,12 @@
+import json
+import logging
+import os
+import uuid
+
+import boto3
 from rest_framework import viewsets, status
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -14,10 +21,53 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 
+logger = logging.getLogger(__name__)
+
 
 def _client_ip(request):
     xff = request.META.get('HTTP_X_FORWARDED_FOR')
     return xff.split(',')[0] if xff else request.META.get('REMOTE_ADDR')
+
+
+def _upload_avatar(photo, user):
+    """Upload a profile photo to S3 and store its URL on the user's profile.
+    Best-effort: a failed upload must not block account creation."""
+    try:
+        bucket = os.getenv('USER_AVATARS_BUCKET', 'user-avatars')
+        endpoint = os.getenv('AWS_ENDPOINT_URL') or None
+        region = os.getenv('AWS_REGION', 'us-east-1')
+        s3 = boto3.client(
+            's3', endpoint_url=endpoint, region_name=region,
+            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID', 'test'),
+            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY', 'test'),
+        )
+        try:
+            s3.create_bucket(Bucket=bucket)
+        except Exception:
+            pass
+        try:
+            s3.put_bucket_policy(Bucket=bucket, Policy=json.dumps({
+                "Version": "2012-10-17",
+                "Statement": [{
+                    "Effect": "Allow", "Principal": "*", "Action": "s3:GetObject",
+                    "Resource": f"arn:aws:s3:::{bucket}/*",
+                }],
+            }))
+        except Exception:
+            pass
+        key = f"{user.cognito_sub or user.id}/{uuid.uuid4().hex}_{photo.name}"
+        s3.put_object(Bucket=bucket, Key=key, Body=photo.read(),
+                      ContentType=getattr(photo, 'content_type', None) or 'application/octet-stream')
+        # Must be browser-reachable: never the internal docker hostname ('localstack').
+        public = (os.getenv('S3_PUBLIC_URL') or 'http://localhost:4566').replace('localstack', 'localhost')
+        url = f"{public}/{bucket}/{key}"
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.avatar = url
+        profile.save(update_fields=['avatar'])
+        return url
+    except Exception as exc:  # noqa: BLE001 - avatar is optional
+        logger.warning("Avatar upload for %s failed: %s", getattr(user, 'email', '?'), exc)
+        return ''
 
 
 @api_view(['GET', 'OPTIONS'])
@@ -272,8 +322,10 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
 )
 @api_view(['POST'])
 @permission_classes([IsAdminOrStaff])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def create_staff(request):
-    """Admin or front-desk clerk provisions a staff/doctor/patient account in Cognito + DB."""
+    """Admin or front-desk clerk provisions a staff/doctor/patient account in Cognito + DB.
+    Accepts an optional multipart `photo` (e.g. a receptionist's avatar)."""
     data = request.data
     email = data.get('email')
     password = data.get('password')
@@ -300,6 +352,10 @@ def create_staff(request):
                         status=status.HTTP_400_BAD_REQUEST)
 
     user = result['user']
+    avatar_url = ''
+    photo = request.FILES.get('photo')
+    if photo:
+        avatar_url = _upload_avatar(photo, user)
     AuditLog.objects.create(
         user=request.user,
         action='create_user',
@@ -314,4 +370,5 @@ def create_staff(request):
         'first_name': user.first_name,
         'last_name': user.last_name,
         'role': user.role,
+        'avatar': avatar_url,
     }, status=status.HTTP_201_CREATED)

@@ -5,12 +5,17 @@ from .models import User, UserProfile, AuditLog
 
 
 class UserSerializer(serializers.ModelSerializer):
+    avatar = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         # cognito_sub is the patient/user UUID used as patient_id across services
         # (needed e.g. so a receptionist can book a visit on behalf of a patient).
-        fields = ('id', 'cognito_sub', 'email', 'first_name', 'last_name', 'role', 'phone', 'is_active', 'date_joined')
+        fields = ('id', 'cognito_sub', 'email', 'first_name', 'last_name', 'role', 'phone', 'is_active', 'date_joined', 'avatar')
         read_only_fields = ('id', 'cognito_sub', 'date_joined')
+
+    def get_avatar(self, obj):
+        return getattr(getattr(obj, 'profile', None), 'avatar', '') or ''
 
 
 class UserDetailSerializer(serializers.ModelSerializer):
